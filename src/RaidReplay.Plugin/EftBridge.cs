@@ -1,9 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using Comfort.Common;
 using EFT;
-using EFT.CameraControl;
-using EFT.Settings;
 using EFT.UI;
 using RaidReplay.Core;
 using UnityEngine;
@@ -33,13 +32,62 @@ namespace RaidReplay
 
         public static string MapId(GameWorld gw) => gw.LocationId?.ToString() ?? "unknown";
 
-        public static Camera MainCamera => CameraManager.Exist ? CameraManager.Instance.Camera : null;
+        // Keep these lookups reflective: the public compile references intentionally omit
+        // some game-private camera/settings types, while they are present in the live client.
+        static object ReadMember(object instance, string name)
+        {
+            if (instance == null) return null;
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+            var type = instance as Type ?? instance.GetType();
+            var target = instance is Type ? null : instance;
+            var property = type.GetProperty(name, flags);
+            if (property != null && property.GetIndexParameters().Length == 0) return property.GetValue(target, null);
+            var field = type.GetField(name, flags);
+            return field != null ? field.GetValue(target) : null;
+        }
+
+        static Type GameType(string name) => typeof(Player).Assembly.GetType(name);
+
+        static void UpdatePlayerCameraController(Player player)
+        {
+            var type = GameType("EFT.CameraControl.PlayerCameraController");
+            if (player == null || type == null) return;
+            var controller = player.GetComponent(type);
+            var method = type.GetMethod("UpdatePointOfView", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (controller != null && method != null) method.Invoke(controller, null);
+        }
+
+        public static Camera MainCamera
+        {
+            get
+            {
+                try
+                {
+                    var managerType = GameType("EFT.CameraControl.CameraManager");
+                    if (managerType == null || !Convert.ToBoolean(ReadMember(managerType, "Exist"))) return null;
+                    var manager = ReadMember(managerType, "Instance");
+                    return ReadMember(manager, "Camera") as Camera;
+                }
+                catch { return null; }
+            }
+        }
 
         public static bool IsAlive(Player p) => p != null && p.HealthController != null && p.HealthController.IsAlive;
 
         public static float DefaultFov()
         {
-            try { return Singleton<SettingsManager>.Instance.Game.Settings.FieldOfView; } catch { return 75f; }
+            try
+            {
+                var settingsType = GameType("EFT.Settings.SettingsManager");
+                if (settingsType == null) return 75f;
+                var singletonType = typeof(Singleton<>).MakeGenericType(settingsType);
+                var singleton = ReadMember(singletonType, "Instance");
+                var game = ReadMember(singleton, "Game");
+                var settings = ReadMember(game, "Settings");
+                var fov = ReadMember(settings, "FieldOfView");
+                return fov != null ? Convert.ToSingle(fov) : 75f;
+            }
+            catch { return 75f; }
         }
 
         // ---------------------------------------------------------------- recording
@@ -142,8 +190,7 @@ namespace RaidReplay
             if (me.PlayerBody != null)
             {
                 me.PlayerBody.PointOfView.Value = EPointOfView.FreeCamera;
-                var pcc = me.GetComponent<PlayerCameraController>();
-                if (pcc != null) pcc.UpdatePointOfView();
+                UpdatePlayerCameraController(me);
             }
             st.Owner = me.GetComponentInChildren<GamePlayerOwner>();
             if (st.Owner != null) { st.OwnerWasEnabled = st.Owner.enabled; st.Owner.enabled = false; }
@@ -164,8 +211,7 @@ namespace RaidReplay
                 if (me.PlayerBody != null)
                 {
                     me.PlayerBody.PointOfView.Value = EPointOfView.FirstPerson;
-                    var pcc = me.GetComponent<PlayerCameraController>();
-                    if (pcc != null) pcc.UpdatePointOfView();
+                    UpdatePlayerCameraController(me);
                 }
             }
             if (st.Owner != null) st.Owner.enabled = st.OwnerWasEnabled;
