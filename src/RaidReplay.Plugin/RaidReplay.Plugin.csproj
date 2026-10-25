@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Build:  dotnet build -c Release -p:EftDir="C:\SPT"   (EftDir = your SPT 4.1 game folder) -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>RaidReplay</AssemblyName>
+    <RootNamespace>RaidReplay</RootNamespace>
+    <EftDir Condition="'$(EftDir)' == ''">D:\EscapeFromTarkov\EscapeFromTarkov</EftDir>
+    <Managed>$(EftDir)\EscapeFromTarkov_Data\Managed</Managed>
+    <BepInExCore>$(EftDir)\BepInEx\core</BepInExCore>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BepInEx.Core" Version="5.*" Condition="!Exists('$(BepInExCore)\BepInEx.dll')" />
+    <PackageReference Include="UnityEngine.Modules" Version="2022.3.43" IncludeAssets="compile" Condition="!Exists('$(Managed)\UnityEngine.CoreModule.dll')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- the codec/format/library code is compiled straight into the plugin: one DLL to install -->
+    <Compile Include="..\RaidReplay.Core\**\*.cs" Exclude="..\RaidReplay.Core\obj\**;..\RaidReplay.Core\bin\**" />
+    <Reference Include="Assembly-CSharp"><HintPath>$(Managed)\Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Comfort"><HintPath>$(Managed)\Comfort.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BepInEx"><HintPath>$(BepInExCore)\BepInEx.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(BepInExCore)\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.*"><HintPath>$(Managed)\%(Filename)%(Extension)</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(Managed)\UnityEngine.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <Target Name="Deploy" AfterTargets="Build" Condition="Exists('$(EftDir)\BepInEx\plugins') And '$(SkipDeploy)' != 'true'">
+    <Copy SourceFiles="$(OutputPath)RaidReplay.dll" DestinationFolder="$(EftDir)\BepInEx\plugins\RaidReplay" />
+  </Target>
+</Project>

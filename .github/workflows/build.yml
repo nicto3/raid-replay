@@ -1,0 +1,48 @@
+﻿name: Build RaidReplay
+
+on:
+  workflow_dispatch:
+    inputs:
+      eft_dir:
+        description: SPT 4.1 game folder on the self-hosted Windows runner
+        required: true
+        default: 'D:\EscapeFromTarkov\EscapeFromTarkov'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: [self-hosted, windows, x64]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Verify local SPT references
+        shell: pwsh
+        env:
+          EFT_DIR: ${{ inputs.eft_dir }}
+        run: |
+          $required = @(
+            "$env:EFT_DIR\EscapeFromTarkov_Data\Managed\Assembly-CSharp.dll",
+            "$env:EFT_DIR\EscapeFromTarkov_Data\Managed\Comfort.dll",
+            "$env:EFT_DIR\BepInEx\core\BepInEx.dll",
+            "$env:EFT_DIR\BepInEx\core\0Harmony.dll"
+          )
+          $missing = $required | Where-Object { -not (Test-Path -LiteralPath $_) }
+          if ($missing) { throw "Missing SPT build references: $($missing -join ', ')" }
+          dotnet --version
+
+      - name: Build plugin
+        shell: pwsh
+        env:
+          EFT_DIR: ${{ inputs.eft_dir }}
+        run: dotnet build src/RaidReplay.Plugin/RaidReplay.Plugin.csproj --configuration Release "-p:EftDir=$env:EFT_DIR" -p:SkipDeploy=true
+
+      - name: Upload plugin DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: RaidReplay
+          path: src/RaidReplay.Plugin/bin/Release/netstandard2.1/RaidReplay.dll
+          if-no-files-found: error
