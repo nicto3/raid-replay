@@ -21,7 +21,7 @@ namespace RaidReplay
             Log = Logger;
             Cfg.Bind(Config);
             string dir = string.IsNullOrWhiteSpace(Cfg.ReplayFolder.Value)
-                ? Path.Combine(Paths.BepInExRootPath, "RaidReplay", "replays") : Cfg.ReplayFolder.Value;
+                ? Path.GetFullPath(Path.Combine(Path.GetDirectoryName(typeof(Plugin).Assembly.Location), "..", "..", "RaidReplay", "replays")) : Cfg.ReplayFolder.Value;
             Library = new ReplayLibrary(dir);
             ShotPatch.TryApply();
             gameObject.AddComponent<RaidRecorder>();

@@ -1,43 +1,40 @@
-﻿name: Build RaidReplay
+name: Build RaidReplay
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      eft_dir:
-        description: SPT 4.1 game folder on the self-hosted Windows runner
-        required: true
-        default: 'D:\EscapeFromTarkov\EscapeFromTarkov'
-        type: string
 
 permissions:
   contents: read
 
 jobs:
   build:
-    runs-on: [self-hosted, windows, x64]
+    runs-on: windows-latest
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Verify local SPT references
+      - name: Check .NET SDK
         shell: pwsh
-        env:
-          EFT_DIR: ${{ inputs.eft_dir }}
+        run: dotnet --info
+
+      - name: Download SPT 4.1 compile references
+        shell: pwsh
         run: |
-          $required = @(
-            "$env:EFT_DIR\EscapeFromTarkov_Data\Managed\Assembly-CSharp.dll",
-            "$env:EFT_DIR\EscapeFromTarkov_Data\Managed\Comfort.dll",
-            "$env:EFT_DIR\BepInEx\core\BepInEx.dll",
-            "$env:EFT_DIR\BepInEx\core\0Harmony.dll"
-          )
-          $missing = $required | Where-Object { -not (Test-Path -LiteralPath $_) }
-          if ($missing) { throw "Missing SPT build references: $($missing -join ', ')" }
-          dotnet --version
+          $managed = Join-Path $env:RUNNER_TEMP 'RaidReplay-SptRefs\EscapeFromTarkov_Data\Managed'
+          New-Item -ItemType Directory -Force -Path $managed | Out-Null
+          Invoke-WebRequest 'https://raw.githubusercontent.com/Solarint/SAIN/4.1.0/References/hollowed.dll' -OutFile (Join-Path $managed 'Assembly-CSharp.dll')
+          Invoke-WebRequest 'https://raw.githubusercontent.com/Solarint/SAIN/4.1.0/References/Comfort.dll' -OutFile (Join-Path $managed 'Comfort.dll')
+          Invoke-WebRequest 'https://raw.githubusercontent.com/Solarint/SAIN/4.1.0/References/Sirenix.Serialization.dll' -OutFile (Join-Path $managed 'Sirenix.Serialization.dll')
+          if ((Get-Item (Join-Path $managed 'Assembly-CSharp.dll')).Length -ne 7898624) { throw 'Unexpected Assembly-CSharp reference size' }
+          if ((Get-Item (Join-Path $managed 'Comfort.dll')).Length -ne 30264) { throw 'Unexpected Comfort reference size' }
+          if ((Get-Item (Join-Path $managed 'Sirenix.Serialization.dll')).Length -ne 114688) { throw 'Unexpected Sirenix.Serialization reference size' }
 
       - name: Build plugin
         shell: pwsh
         env:
-          EFT_DIR: ${{ inputs.eft_dir }}
+          EFT_DIR: ${{ runner.temp }}\RaidReplay-SptRefs
         run: dotnet build src/RaidReplay.Plugin/RaidReplay.Plugin.csproj --configuration Release "-p:EftDir=$env:EFT_DIR" -p:SkipDeploy=true
 
       - name: Upload plugin DLL

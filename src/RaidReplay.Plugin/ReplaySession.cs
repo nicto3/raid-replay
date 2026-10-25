@@ -31,6 +31,8 @@ namespace RaidReplay
         public static void Toast(string text, float seconds = 4f) { _toast = text; _toastUntil = Time.realtimeSinceStartup + seconds; }
 
         Replay _rep; ReplayClock _clock; PuppetManager _pup; GameWorld _gw; Player _me; EftBridge.LocalState _local;
+        FaceCam _face;
+        TopDownView _top;
         Sample[][] _tracks; Sample[] _cur; bool[] _present;
         CamMode _mode; int _povIdx, _follow;
         int _evCursor; float _nextAiSweep;
