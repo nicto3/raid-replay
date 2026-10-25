@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq.Expressions;
 using System.Reflection;
 using EFT;
 using EFT.Ballistics;
@@ -22,6 +23,7 @@ namespace RaidReplay
         float _t0, _nextPov, _nextOthers;
         readonly Dictionary<string, int> _idx = new Dictionary<string, int>();
         readonly HashSet<string> _hooked = new HashSet<string>();
+        readonly Dictionary<Player, Delegate> _deathHandlers = new Dictionary<Player, Delegate>();
         readonly Dictionary<string, Player> _players = new Dictionary<string, Player>();
 
         void Awake() { Instance = this; }
@@ -87,7 +89,7 @@ namespace RaidReplay
             if (_idx.TryGetValue(p.ProfileId, out int i)) return i;
             i = _w.DefineEntity(EftBridge.Describe(p, isPov));
             _idx[p.ProfileId] = i; _players[p.ProfileId] = p;
-            if (_hooked.Add(p.ProfileId)) p.OnPlayerDead += OnPlayerDeadHandler; // method group: works with whatever delegate type EFT uses
+            if (_hooked.Add(p.ProfileId)) HookDeathEvent(p);
             return i;
         }
 
@@ -97,7 +99,29 @@ namespace RaidReplay
             _w.AddSample(Ensure(p, isPov), s);
         }
 
-        void OnPlayerDeadHandler(Player victim, IPlayer killer, DamageInfo damage, EBodyPart part)
+        void HookDeathEvent(Player player)
+        {
+            try
+            {
+                var deathEvent = player.GetType().GetEvent("OnPlayerDead", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                var handlerType = deathEvent?.EventHandlerType;
+                var invoke = handlerType?.GetMethod("Invoke");
+                if (deathEvent == null || invoke == null || invoke.ReturnType != typeof(void)) return;
+                var signature = invoke.GetParameters();
+                if (signature.Length < 2) return;
+                var args = new ParameterExpression[signature.Length];
+                for (int i = 0; i < args.Length; i++) args[i] = Expression.Parameter(signature[i].ParameterType, "arg" + i);
+                var callback = GetType().GetMethod(nameof(OnPlayerDeadDynamic), BindingFlags.Instance | BindingFlags.NonPublic);
+                var body = Expression.Call(Expression.Constant(this), callback,
+                    Expression.Convert(args[0], typeof(Player)), Expression.Convert(args[1], typeof(IPlayer)));
+                var handler = Expression.Lambda(handlerType, body, args).Compile();
+                deathEvent.AddEventHandler(player, handler);
+                _deathHandlers[player] = handler;
+            }
+            catch (Exception e) { Plugin.Log.LogDebug("Could not hook player death event: " + e.Message); }
+        }
+
+        void OnPlayerDeadDynamic(Player victim, IPlayer killer)
         {
             if (victim != null) OnDead(victim.ProfileId, killer);
         }
@@ -123,7 +147,13 @@ namespace RaidReplay
         {
             if (_w == null) return;
             var w = _w; _w = null;
-            foreach (var p in _players.Values) if (p != null) p.OnPlayerDead -= OnPlayerDeadHandler;
+            foreach (var pair in _deathHandlers)
+            {
+                try { pair.Key.GetType().GetEvent("OnPlayerDead", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.RemoveEventHandler(pair.Key, pair.Value); }
+                catch { }
+            }
+            _deathHandlers.Clear();
+            _hooked.Clear();
             _players.Clear();
             try
             {
