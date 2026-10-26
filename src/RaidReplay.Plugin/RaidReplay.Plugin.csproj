@@ -8,13 +8,13 @@
     <RootNamespace>RaidReplay</RootNamespace>
     <EftDir Condition="'$(EftDir)' == ''">D:\EscapeFromTarkov\EscapeFromTarkov</EftDir>
     <Managed>$(EftDir)\EscapeFromTarkov_Data\Managed</Managed>
-    <BepInExCore>$(EftDir)\BepInEx\core</BepInExCore>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="BepInEx.Core" Version="5.*" Condition="!Exists('$(BepInExCore)\BepInEx.dll')" />
-    <PackageReference Include="UnityEngine.Modules" Version="2021.3.33" IncludeAssets="compile" Condition="!Exists('$(Managed)\UnityEngine.CoreModule.dll')" />
+    <PackageReference Include="BepInEx.Core" Version="5.*" Condition="!Exists('$(EftDir)\BepInEx\core\BepInEx.dll')" />
+    <PackageReference Include="UnityEngine.Modules" Version="2022.3.43" IncludeAssets="compile" Condition="!Exists('$(Managed)\UnityEngine.CoreModule.dll')" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" Condition="'$(TargetFramework)' == 'net472'" />
   </ItemGroup>
 
   <ItemGroup>
@@ -22,15 +22,17 @@
     <Compile Include="..\RaidReplay.Core\**\*.cs" Exclude="..\RaidReplay.Core\obj\**;..\RaidReplay.Core\bin\**" />
     <Reference Include="Assembly-CSharp" Condition="Exists('$(Managed)\Assembly-CSharp.dll')"><HintPath>$(Managed)\Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Comfort" Condition="Exists('$(Managed)\Comfort.dll')"><HintPath>$(Managed)\Comfort.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="BepInEx" Condition="Exists('$(BepInExCore)\BepInEx.dll')"><HintPath>$(BepInExCore)\BepInEx.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="0Harmony" Condition="Exists('$(BepInExCore)\0Harmony.dll')"><HintPath>$(BepInExCore)\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BepInEx" Condition="Exists('$(EftDir)\BepInEx\core\BepInEx.dll')"><HintPath>$(EftDir)\BepInEx\core\BepInEx.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony" Condition="Exists('$(EftDir)\BepInEx\core\0Harmony.dll')"><HintPath>$(EftDir)\BepInEx\core\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Sirenix.Serialization" Condition="Exists('$(Managed)\Sirenix.Serialization.dll')"><HintPath>$(Managed)\Sirenix.Serialization.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine" Condition="Exists('$(Managed)\UnityEngine.dll')"><HintPath>$(Managed)\UnityEngine.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.CoreModule" Condition="Exists('$(Managed)\UnityEngine.CoreModule.dll')"><HintPath>$(Managed)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI" Condition="Exists('$(Managed)\UnityEngine.UI.dll')"><HintPath>$(Managed)\UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UIModule" Condition="Exists('$(Managed)\UnityEngine.UIModule.dll')"><HintPath>$(Managed)\UnityEngine.UIModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.IMGUIModule" Condition="Exists('$(Managed)\UnityEngine.IMGUIModule.dll')"><HintPath>$(Managed)\UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.TextRenderingModule" Condition="Exists('$(Managed)\UnityEngine.TextRenderingModule.dll')"><HintPath>$(Managed)\UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.PhysicsModule" Condition="Exists('$(Managed)\UnityEngine.PhysicsModule.dll')"><HintPath>$(Managed)\UnityEngine.PhysicsModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.InputLegacyModule" Condition="Exists('$(Managed)\UnityEngine.InputLegacyModule.dll')"><HintPath>$(Managed)\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="Sirenix.Serialization" Condition="Exists('$(Managed)\Sirenix.Serialization.dll')"><HintPath>$(Managed)\Sirenix.Serialization.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="UnityEngine" Condition="Exists('$(Managed)\UnityEngine.dll')"><HintPath>$(Managed)\UnityEngine.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>
 
   <Target Name="Deploy" AfterTargets="Build" Condition="Exists('$(EftDir)\BepInEx\plugins') And '$(SkipDeploy)' != 'true'">

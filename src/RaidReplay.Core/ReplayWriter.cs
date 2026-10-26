@@ -23,6 +23,7 @@ namespace RaidReplay.Core
 
         readonly List<EntityInfo> _pendingDefs = new List<EntityInfo>();
         readonly List<ReplayEvent> _events = new List<ReplayEvent>();
+        readonly List<WorldEvent> _world = new List<WorldEvent>();
         readonly Dictionary<int, List<Sample>> _tracks = new Dictionary<int, List<Sample>>();
         int _nextIndex, _chunkIndex = -1, _chunkStart, _maxTime;
         bool _disposed;
@@ -72,6 +73,15 @@ namespace RaidReplay.Core
             LastTimeMs = Math.Max(LastTimeMs, e.TimeMs);
         }
 
+        public void AddWorld(WorldEvent e)
+        {
+            Advance(e.TimeMs);
+            if (e.TimeMs < _chunkStart) e.TimeMs = _chunkStart;
+            _world.Add(e);
+            if (e.TimeMs > _maxTime) _maxTime = e.TimeMs;
+            LastTimeMs = Math.Max(LastTimeMs, e.TimeMs);
+        }
+
         void Advance(int timeMs)
         {
             int idx = Math.Max(0, timeMs) / _chunkMs;
@@ -80,7 +90,7 @@ namespace RaidReplay.Core
 
         void FlushChunk()
         {
-            if (_pendingDefs.Count == 0 && _events.Count == 0 && _tracks.Count == 0) return;
+            if (_pendingDefs.Count == 0 && _events.Count == 0 && _tracks.Count == 0 && _world.Count == 0) return;
             var ms = new MemoryStream(64 * 1024);
             using (var w = new BinaryWriter(ms, Encoding.UTF8, true))
             {
@@ -122,9 +132,15 @@ namespace RaidReplay.Core
                         w.Write(s.Flags); w.Write(s.Speed); w.Write(s.Fov);
                     }
                 }
+                w.WriteVar((uint)_world.Count);
+                foreach (var we in _world)
+                {
+                    w.WriteVar((uint)Math.Max(0, we.TimeMs - _chunkStart)); w.Write((byte)we.Kind);
+                    w.WriteVar((uint)we.NetId); w.Write(we.State); w.Write((byte)(we.Broken ? 1 : 0));
+                }
             }
             _queue.Add(new Job { Start = _chunkStart, End = _maxTime, Raw = ms.ToArray() });
-            _pendingDefs.Clear(); _events.Clear(); _tracks.Clear();
+            _pendingDefs.Clear(); _events.Clear(); _tracks.Clear(); _world.Clear();
         }
 
         void Work()

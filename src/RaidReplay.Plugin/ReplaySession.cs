@@ -22,18 +22,21 @@ namespace RaidReplay
         static bool _exitRequested;
         static string _toast; static float _toastUntil;
 
+        public static string CurrentPath { get; private set; }
+
         public static void Queue(string path)
         {
+            if (Active && _inst != null) { _inst.SwitchTo(path); return; }   // already in a raid on some map: switch without reloading
             Pending = path;
             Toast(EftBridge.TryGetWorld(out _) ? "Replay queued. It starts when a solo raid on the same map is running." : "Replay queued. Deploy on the same map (solo raid) to start it.", 6f);
         }
         public static void RequestExit() { _exitRequested = true; }
+        public static void Cancel() { Pending = null; Toast("Queued replay cancelled."); }
         public static void Toast(string text, float seconds = 4f) { _toast = text; _toastUntil = Time.realtimeSinceStartup + seconds; }
 
-        Replay _rep; ReplayClock _clock; PuppetManager _pup; GameWorld _gw; Player _me; EftBridge.LocalState _local;
-        FaceCam _face;
-        TopDownView _top;
+        Replay _rep; ReplayClock _clock; PuppetManager _pup; FaceCam _face; TopDownView _top; GameWorld _gw; Player _me; EftBridge.LocalState _local;
         Sample[][] _tracks; Sample[] _cur; bool[] _present;
+        WorldTimeline _wtl; WorldApplier _wapp; int _wprev; bool _wjump; readonly List<WorldChange> _wch = new List<WorldChange>();
         CamMode _mode; int _povIdx, _follow;
         int _evCursor; float _nextAiSweep;
         bool _showHud = true, _showMap = true, _altCursor;
@@ -49,7 +52,8 @@ namespace RaidReplay
         void Update()
         {
             if (!Active) { TryBegin(); return; }
-            if (_exitRequested || !EftBridge.TryGetWorld(out var gw) || gw != _gw || _me == null) { End(); return; }
+            if (_exitRequested) { ExitReplay(); return; }
+            if (!EftBridge.TryGetWorld(out var gw) || gw != _gw || _me == null) { End(); return; }
 
             HandleInput();
             if (!Active) return;
@@ -58,6 +62,7 @@ namespace RaidReplay
             for (int i = 0; i < _cur.Length; i++)
                 _present[i] = TrackSampler.TryEvaluate(_tracks[i], now, TrackSampler.DefaultMaxGapMs, out _cur[i]);
             DispatchEvents(now);
+            SyncWorld(now);
             _pup.Apply(_cur, _present, _mode == CamMode.Pov ? _povIdx : _mode == CamMode.Follow ? _follow : -1);
 
             if (Time.time >= _nextAiSweep) { EftBridge.DeactivateAI(_gw); _nextAiSweep = Time.time + 1f; }
@@ -91,6 +96,15 @@ namespace RaidReplay
         void Start(GameWorld gw)
         {
             _gw = gw; _me = gw.MainPlayer;
+            LoadState();
+            _local = EftBridge.EnterReplayMode(_me);
+            EftBridge.DeactivateAI(gw); _nextAiSweep = Time.time + 1f;
+            Pending = null; Active = true; _exitRequested = false;
+        }
+
+        /// <summary>Everything that depends on the loaded replay; also used when switching to another replay of the same map.</summary>
+        void LoadState()
+        {
             int n = _rep.Entities.Count;
             _tracks = new Sample[n][]; _cur = new Sample[n]; _present = new bool[n];
             for (int i = 0; i < n; i++) _tracks[i] = _rep.Tracks.TryGetValue(i, out var t) ? t : null;
@@ -99,16 +113,37 @@ namespace RaidReplay
             _clock = new ReplayClock(_rep.DurationMs);
             _pup = new PuppetManager(_rep, _povIdx);
             _evCursor = 0; _feed.Clear(); _showHud = true; _showMap = true;
-            _local = EftBridge.EnterReplayMode(_me);
-            EftBridge.DeactivateAI(gw); _nextAiSweep = Time.time + 1f;
-            Pending = null; Active = true; _exitRequested = false;
-            Toast($"Replay: {_rep.Header.PovNickname} on {_rep.Header.Map}" + (_rep.Truncated ? " (file was cut off)" : "") + "   [Space] pause  [V] free cam  [C] watch others", 7f);
+            _wtl = new WorldTimeline(_rep.World); _wapp = new WorldApplier(); _wprev = 0; _wjump = true; _wch.Clear();
+            CurrentPath = _rep.SourcePath;
+            Toast($"Replay: {_rep.Header.PovNickname} on {MapIds.DisplayName(_rep.Header.Map)}" + (_rep.Truncated ? " (file was cut off)" : "") + (_wtl.ObjectCount > 0 ? $"  ·  {_wtl.ObjectCount} doors/lamps synced" : "  ·  no door data in this recording") + "   [Space] pause  [V] free cam  [C] watch others", 7f);
+        }
+
+        void SwitchTo(string path)
+        {
+            try
+            {
+                var info = ReplayFile.ReadInfo(path);
+                if (!MapIds.Same(info.Header.Map, EftBridge.MapId(_gw)))
+                { Pending = path; Toast($"That replay is from {MapIds.DisplayName(info.Header.Map)}. Leave this raid and deploy there — it is queued."); return; }
+                var rep = Replay.Load(path);
+                if (rep.Tracks.Count == 0) { Toast("Replay contains no data."); return; }
+                try { _pup?.DestroyAll(); } catch { }
+                _rep = rep; LoadState();
+            }
+            catch (Exception e) { Toast("Could not switch replay: " + e.Message, 6f); }
+        }
+
+        void ExitReplay()
+        {
+            var me = _me; bool leave = Cfg.LeaveAsExtracted.Value;
+            End();
+            if (leave) { if (!EftBridge.TryLeaveAsExtracted(me)) Toast("Replay closed. Leaving the raid automatically is not available here — use the normal exit."); }
         }
 
         void End()
         {
             bool was = Active;
-            Active = false; _exitRequested = false;
+            Active = false; _exitRequested = false; CurrentPath = null;
             try { _pup?.DestroyAll(); } catch { }
             try { _face?.Destroy(); _top?.Destroy(); } catch { }
             _face = null; _top = null; _pup = null;
@@ -123,7 +158,8 @@ namespace RaidReplay
 
         void HandleInput()
         {
-            if (Cfg.KeyExit.Value.IsDown()) { End(); return; }
+            if (ReplayCenter.Visible) return;   // the Replay Center owns the keyboard and mouse while open
+            if (Cfg.KeyExit.Value.IsDown()) { ExitReplay(); return; }
             if (Cfg.KeyPause.Value.IsDown())
             {
                 if (_clock.Ended) { SeekTo(0); _clock.Paused = false; }
@@ -170,7 +206,15 @@ namespace RaidReplay
             int now = _clock.NowMs;
             var ev = _rep.Events; int lo = 0, hi = ev.Count;
             while (lo < hi) { int mid = (lo + hi) >> 1; if (ev[mid].TimeMs <= now) lo = mid + 1; else hi = mid; }
-            _evCursor = lo; _pup.ClearTracers(); _feed.Clear();
+            _evCursor = lo; _pup.ClearTracers(); _feed.Clear(); _wjump = true;
+        }
+
+        void SyncWorld(int now)
+        {
+            _wch.Clear();
+            _wtl.Advance(_wprev, now, _wjump, _wch); _wjump = false; _wprev = now;
+            if (_wch.Count > 0) _wapp.Enqueue(_wch);
+            _wapp.Tick();
         }
 
         void NextTarget()
@@ -192,7 +236,7 @@ namespace RaidReplay
             {
                 var e = ev[_evCursor++];
                 if (_clock.Paused || now - e.TimeMs > 400) continue;
-                if (e.Type == EventKind.Shot && Cfg.ShowTracers.Value) _pup.SpawnTracer(new Vector3(e.X, e.Y, e.Z), e.Arg, e.Arg2);
+                if (e.Type == EventKind.Shot && Cfg.ShowTracers.Value) { _pup.SpawnTracer(new Vector3(e.X, e.Y, e.Z), e.Arg, e.Arg2); _pup.Flash(e.Actor); }
                 else if (e.Type == EventKind.Kill)
                 {
                     string killer = e.Actor >= 0 && e.Actor < _rep.Entities.Count && _rep.Entities[e.Actor] != null ? _rep.Entities[e.Actor].Nickname : "?";
@@ -214,17 +258,17 @@ namespace RaidReplay
             if (_mode == CamMode.Free)
             {
                 float dt = Time.unscaledDeltaTime;
-                _freeYaw += Input.GetAxis("Mouse X") * 2.2f;
-                _freePitch = Mathf.Clamp(_freePitch - Input.GetAxis("Mouse Y") * 2.2f, -89f, 89f);
+                bool ui = ReplayCenter.Visible;
+                if (!ui) { _freeYaw += Input.GetAxis("Mouse X") * 2.2f; _freePitch = Mathf.Clamp(_freePitch - Input.GetAxis("Mouse Y") * 2.2f, -89f, 89f); }
                 _freeSpeed = Mathf.Clamp(_freeSpeed * (1f + Input.mouseScrollDelta.y * 0.15f), 0.5f, 80f);
                 var rot = Quaternion.Euler(_freePitch, _freeYaw, 0f);
                 Vector3 mv = Vector3.zero;
-                if (Input.GetKey(KeyCode.W)) mv += rot * Vector3.forward;
+                if (!ui) { if (Input.GetKey(KeyCode.W)) mv += rot * Vector3.forward;
                 if (Input.GetKey(KeyCode.S)) mv -= rot * Vector3.forward;
                 if (Input.GetKey(KeyCode.D)) mv += rot * Vector3.right;
                 if (Input.GetKey(KeyCode.A)) mv -= rot * Vector3.right;
                 if (Input.GetKey(KeyCode.E)) mv += Vector3.up;
-                if (Input.GetKey(KeyCode.Q)) mv -= Vector3.up;
+                if (Input.GetKey(KeyCode.Q)) mv -= Vector3.up; }
                 _freePos += mv * (_freeSpeed * (Input.GetKey(KeyCode.LeftShift) ? 3f : 1f) * dt);
                 cam.transform.SetPositionAndRotation(_freePos, rot);
                 cam.fieldOfView = EftBridge.DefaultFov();

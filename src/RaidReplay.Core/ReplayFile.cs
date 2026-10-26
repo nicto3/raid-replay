@@ -13,7 +13,7 @@ namespace RaidReplay.Core
     /// </summary>
     public static class ReplayFile
     {
-        public const ushort CurrentVersion = 1;
+        public const ushort CurrentVersion = 2;
         public const string Extension = ".rrpl";
         internal static readonly byte[] Magic = { (byte)'R', (byte)'R', (byte)'P', (byte)'L' };
 
@@ -74,10 +74,12 @@ namespace RaidReplay.Core
 
     public sealed class Replay
     {
+        public string SourcePath;
         public ReplayHeader Header;
         public List<EntityInfo> Entities = new List<EntityInfo>();
         public Dictionary<int, Sample[]> Tracks = new Dictionary<int, Sample[]>();
         public List<ReplayEvent> Events = new List<ReplayEvent>();
+        public List<WorldEvent> World = new List<WorldEvent>();
         public int DurationMs;
         public bool Truncated;
 
@@ -91,7 +93,7 @@ namespace RaidReplay.Core
         {
             using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var r = new BinaryReader(fs, Encoding.UTF8);
-            var rep = new Replay { Header = ReplayFile.ReadHeader(r) };
+            var rep = new Replay { SourcePath = path, Header = ReplayFile.ReadHeader(r) };
             var lists = new Dictionary<int, List<Sample>>();
             try
             {
@@ -117,6 +119,7 @@ namespace RaidReplay.Core
             }
             foreach (var kv in lists) rep.Tracks[kv.Key] = kv.Value.ToArray();
             rep.Events.Sort((a, b) => a.TimeMs.CompareTo(b.TimeMs));
+            rep.World.Sort((a, b) => a.TimeMs.CompareTo(b.TimeMs));
             return rep;
         }
 
@@ -171,6 +174,18 @@ namespace RaidReplay.Core
                         BodyYaw = Codec.QToAngle(by), LookYaw = Codec.QToAngle(ly),
                         LookPitch = Codec.QToAngle(lp), LookRoll = Codec.QToAngle(lr),
                         Flags = r.ReadByte(), Speed = r.ReadByte(), Fov = r.ReadByte()
+                    });
+                }
+            }
+            if (rep.Header.Version >= 2 && r.BaseStream.Position < r.BaseStream.Length)
+            {
+                uint worlds = r.ReadVar();
+                for (uint i = 0; i < worlds; i++)
+                {
+                    rep.World.Add(new WorldEvent
+                    {
+                        TimeMs = chunkStart + (int)r.ReadVar(), Kind = (WorldKind)r.ReadByte(), NetId = (int)r.ReadVar(),
+                        State = r.ReadByte(), Broken = r.ReadByte() != 0
                     });
                 }
             }

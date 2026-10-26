@@ -52,6 +52,18 @@ namespace RaidReplay.Core
         public float Arg, Arg2; // Shot: yaw, pitch of the bullet direction
     }
 
+    public enum WorldKind : byte { Door = 1, Lamp = 2 }
+
+    /// <summary>State of a door / container (EDoorState) or lamp (Turnable.EState) at a moment of the raid. Time 0 entries are the baseline.</summary>
+    public struct WorldEvent
+    {
+        public int TimeMs;
+        public WorldKind Kind;
+        public int NetId;
+        public byte State;
+        public bool Broken;
+    }
+
     public sealed class ReplayHeader
     {
         public ushort Version = ReplayFile.CurrentVersion;

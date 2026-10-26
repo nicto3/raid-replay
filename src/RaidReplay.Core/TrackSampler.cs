@@ -112,5 +112,23 @@ namespace RaidReplay.Core
             return s;
         }
         public static bool Same(string a, string b) => Normalize(a) == Normalize(b);
+
+        public static string DisplayName(string id)
+        {
+            switch (Normalize(id))
+            {
+                case "bigmap": return "Customs";
+                case "factory4": return "Factory";
+                case "woods": return "Woods";
+                case "interchange": return "Interchange";
+                case "rezervbase": return "Reserve";
+                case "shoreline": return "Shoreline";
+                case "laboratory": return "The Lab";
+                case "lighthouse": return "Lighthouse";
+                case "tarkovstreets": return "Streets of Tarkov";
+                case "sandbox": return "Ground Zero";
+                default: return string.IsNullOrEmpty(id) ? "Unknown" : id;
+            }
+        }
     }
 }

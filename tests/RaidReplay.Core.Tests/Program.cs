@@ -111,6 +111,47 @@ static class T
         lib.SetPinned(paths[1], false); Check(!lib.IsPinned(paths[1]), "unpin");
     }
 
+    static void World(string dir)
+    {
+        // timeline logic
+        var ev = new List<WorldEvent>
+        {
+            new WorldEvent { TimeMs = 0, Kind = WorldKind.Door, NetId = 7, State = 2 },      // Shut
+            new WorldEvent { TimeMs = 0, Kind = WorldKind.Door, NetId = 9, State = 1 },      // Locked
+            new WorldEvent { TimeMs = 0, Kind = WorldKind.Lamp, NetId = 7, State = 1 },      // same netId, different kind
+            new WorldEvent { TimeMs = 5000, Kind = WorldKind.Door, NetId = 7, State = 3 },   // Open
+            new WorldEvent { TimeMs = 9000, Kind = WorldKind.Door, NetId = 7, State = 2 },   // Shut again
+            new WorldEvent { TimeMs = 9500, Kind = WorldKind.Lamp, NetId = 7, State = 0 },
+        };
+        var tl = new WorldTimeline(ev); var o = new List<WorldChange>();
+        Check(tl.ObjectCount == 3, "door 7, door 9, lamp 7 are three separate objects");
+        tl.Advance(0, 0, true, o);
+        Check(o.Count == 3 && !o[0].Animated, "baseline emits every object once, not animated");
+        o.Clear(); tl.Advance(0, 4000, false, o); Check(o.Count == 0, "no change before first event");
+        o.Clear(); tl.Advance(4000, 5100, false, o); Check(o.Count == 1 && o[0].NetId == 7 && o[0].To == 3 && o[0].Animated && o[0].Kind == WorldKind.Door, "door opens, animated");
+        o.Clear(); tl.Advance(5100, 5200, false, o); Check(o.Count == 0, "no repeat emission");
+        o.Clear(); tl.Advance(5200, 12000, false, o); Check(o.Count == 2 && o.Exists(c => c.Kind == WorldKind.Door && c.To == 2) && o.Exists(c => c.Kind == WorldKind.Lamp && c.To == 0), "door closes + lamp off in one step");
+        o.Clear(); tl.Advance(12000, 6000, true, o); Check(o.Count == 2 && o.TrueForAll(c => !c.Animated) && o.Exists(c => c.Kind == WorldKind.Door && c.To == 3) && o.Exists(c => c.Kind == WorldKind.Lamp && c.To == 1), "seek back snaps door open + lamp on");
+        o.Clear(); tl.Advance(6000, 6100, false, o); Check(o.Count == 0, "playing on after seek is quiet");
+        o.Clear(); tl.Advance(6100, 100, false, o); Check(o.Count == 1 && o[0].To == 2 && !o[0].Animated, "backwards time is treated as jump (only the door differs)");
+        // file roundtrip with world section
+        string p = Path.Combine(dir, "world.rrpl");
+        using (var w = new ReplayWriter(p, Hdr()))
+        {
+            int a = w.DefineEntity(new EntityInfo { IsPov = true, ProfileId = "x" });
+            w.AddWorld(new WorldEvent { TimeMs = 0, Kind = WorldKind.Door, NetId = 1234, State = 2 });
+            for (int t = 0; t < 13000; t += 500)
+            {
+                w.AddSample(a, Mk(t, t * 0.001f, 0, 0));
+                if (t == 6000) w.AddWorld(new WorldEvent { TimeMs = 6100, Kind = WorldKind.Door, NetId = 1234, State = 3, Broken = true });
+            }
+            w.AddWorld(new WorldEvent { TimeMs = 12900, Kind = WorldKind.Lamp, NetId = 55, State = 1 });
+        }
+        var r = Replay.Load(p);
+        Check(r.Header.Version == 2 && r.World.Count == 3 && r.World[1].TimeMs == 6100 && r.World[1].Broken && r.World[1].NetId == 1234 && r.World[2].Kind == WorldKind.Lamp, "world events roundtrip across chunks");
+        Check(MapIds.DisplayName("factory4_night") == "Factory" && MapIds.DisplayName("bigmap") == "Customs" && MapIds.DisplayName("weird") == "weird", "map display names");
+    }
+
     static void MiniMap()
     {
         Check(MapIds.Same("factory4_day","Factory4_Night") && MapIds.Same("Sandbox_high","sandbox") && !MapIds.Same("bigmap","Woods"), "map id normalisation");
@@ -164,7 +205,7 @@ static class T
     {
         string dir = Path.Combine(Path.GetTempPath(), "rr_tests_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
-        try { RoundTrip(dir); Sampler(); Clock(); Library(dir); MiniMap(); SizeBenchmark(dir); }
+        try { RoundTrip(dir); Sampler(); Clock(); Library(dir); World(dir); MiniMap(); SizeBenchmark(dir); }
         finally { try { Directory.Delete(dir, true); } catch { } }
         Console.WriteLine($"{_pass} passed, {_fail} failed");
         return _fail == 0 ? 0 : 1;

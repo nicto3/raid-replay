@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq.Expressions;
 using System.Reflection;
 using EFT;
 using EFT.Ballistics;
@@ -18,21 +17,26 @@ namespace RaidReplay
         public static RaidRecorder Instance;
 
         ReplayWriter _w;
+        WorldRecorder _world;
         GameWorld _gw;
         Player _me;
         float _t0, _nextPov, _nextOthers;
         readonly Dictionary<string, int> _idx = new Dictionary<string, int>();
         readonly HashSet<string> _hooked = new HashSet<string>();
-        readonly Dictionary<Player, Delegate> _deathHandlers = new Dictionary<Player, Delegate>();
         readonly Dictionary<string, Player> _players = new Dictionary<string, Player>();
 
         void Awake() { Instance = this; }
+
+        public bool Recording => _w != null;
+        public string StatusLine => _w == null ? "" :
+            $"REC {TimeSpan.FromMilliseconds(NowMs):m\\:ss}  {_w.BytesWritten / 1048576f:F1} MB" + (_world != null ? $"  {_world.DoorCount} doors  {_world.LampCount} lamps" : "");
 
         int NowMs => Mathf.Max(0, Mathf.RoundToInt((Time.time - _t0) * 1000f));
 
         void Update()
         {
             bool ready = EftBridge.TryGetWorld(out var gw) && EftBridge.RaidReady(gw);
+            if (ready) RaidStartPatch.MarkReady();
             if (_w == null)
             {
                 if (ready && Cfg.RecordEnabled.Value && !ReplaySession.Active) Begin(gw);
@@ -57,7 +61,8 @@ namespace RaidReplay
                     OthersHz = Cfg.OthersHz.Value, PovHz = Cfg.PovHz.Value
                 };
                 _w = new ReplayWriter(Plugin.Library.CreatePath(header.Map, DateTime.Now), header);
-                Plugin.Log.LogInfo("Recording raid on " + header.Map + " -> " + _w.Path);
+                _world = new WorldRecorder(_w);
+                Plugin.Log.LogInfo($"Recording raid on {header.Map} -> {_w.Path} ({_world.DoorCount} doors/containers, {_world.LampCount} lamps tracked)");
             }
             catch (Exception e) { Plugin.Log.LogError("Could not start recording: " + e); _w = null; }
         }
@@ -66,6 +71,7 @@ namespace RaidReplay
         {
             float now = Time.time - _t0;
             int t = NowMs;
+            _world?.Tick(now, t);
             if (now >= _nextPov)
             {
                 _nextPov = now + 1f / Mathf.Max(1, Cfg.PovHz.Value);
@@ -89,7 +95,7 @@ namespace RaidReplay
             if (_idx.TryGetValue(p.ProfileId, out int i)) return i;
             i = _w.DefineEntity(EftBridge.Describe(p, isPov));
             _idx[p.ProfileId] = i; _players[p.ProfileId] = p;
-            if (_hooked.Add(p.ProfileId)) HookDeathEvent(p);
+            if (_hooked.Add(p.ProfileId)) p.OnPlayerDead += OnPlayerDeadHandler; // method group: works with whatever delegate type EFT uses
             return i;
         }
 
@@ -99,29 +105,7 @@ namespace RaidReplay
             _w.AddSample(Ensure(p, isPov), s);
         }
 
-        void HookDeathEvent(Player player)
-        {
-            try
-            {
-                var deathEvent = player.GetType().GetEvent("OnPlayerDead", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                var handlerType = deathEvent?.EventHandlerType;
-                var invoke = handlerType?.GetMethod("Invoke");
-                if (deathEvent == null || invoke == null || invoke.ReturnType != typeof(void)) return;
-                var signature = invoke.GetParameters();
-                if (signature.Length < 2) return;
-                var args = new ParameterExpression[signature.Length];
-                for (int i = 0; i < args.Length; i++) args[i] = Expression.Parameter(signature[i].ParameterType, "arg" + i);
-                var callback = GetType().GetMethod(nameof(OnPlayerDeadDynamic), BindingFlags.Instance | BindingFlags.NonPublic);
-                var body = Expression.Call(Expression.Constant(this), callback,
-                    Expression.Convert(args[0], typeof(Player)), Expression.Convert(args[1], typeof(IPlayer)));
-                var handler = Expression.Lambda(handlerType, body, args).Compile();
-                deathEvent.AddEventHandler(player, handler);
-                _deathHandlers[player] = handler;
-            }
-            catch (Exception e) { Plugin.Log.LogDebug("Could not hook player death event: " + e.Message); }
-        }
-
-        void OnPlayerDeadDynamic(Player victim, IPlayer killer)
+        void OnPlayerDeadHandler(Player victim, IPlayer killer, DamageInfo damage, EBodyPart part)
         {
             if (victim != null) OnDead(victim.ProfileId, killer);
         }
@@ -146,14 +130,8 @@ namespace RaidReplay
         void End()
         {
             if (_w == null) return;
-            var w = _w; _w = null;
-            foreach (var pair in _deathHandlers)
-            {
-                try { pair.Key.GetType().GetEvent("OnPlayerDead", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.RemoveEventHandler(pair.Key, pair.Value); }
-                catch { }
-            }
-            _deathHandlers.Clear();
-            _hooked.Clear();
+            var w = _w; _w = null; _world = null;
+            foreach (var p in _players.Values) if (p != null) p.OnPlayerDead -= OnPlayerDeadHandler;
             _players.Clear();
             try
             {

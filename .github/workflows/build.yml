@@ -19,17 +19,22 @@ jobs:
         shell: pwsh
         run: dotnet --info
 
-      - name: Download SPT 4.1 compile references
+      - name: Download EFT 0.16.9 compile references
         shell: pwsh
         run: |
           $managed = Join-Path $env:RUNNER_TEMP 'RaidReplay-SptRefs\EscapeFromTarkov_Data\Managed'
           New-Item -ItemType Directory -Force -Path $managed | Out-Null
-          Invoke-WebRequest 'https://raw.githubusercontent.com/Solarint/SAIN/4.1.0/References/hollowed.dll' -OutFile (Join-Path $managed 'Assembly-CSharp.dll')
-          Invoke-WebRequest 'https://raw.githubusercontent.com/Solarint/SAIN/4.1.0/References/Comfort.dll' -OutFile (Join-Path $managed 'Comfort.dll')
-          Invoke-WebRequest 'https://raw.githubusercontent.com/Solarint/SAIN/4.1.0/References/Sirenix.Serialization.dll' -OutFile (Join-Path $managed 'Sirenix.Serialization.dll')
-          if ((Get-Item (Join-Path $managed 'Assembly-CSharp.dll')).Length -ne 7898624) { throw 'Unexpected Assembly-CSharp reference size' }
+          $base = 'https://raw.githubusercontent.com/project-fika/Fika-Plugin/v2.4.3/References'
+          Invoke-WebRequest "$base/hollowed.dll" -OutFile (Join-Path $managed 'Assembly-CSharp.dll')
+          Invoke-WebRequest "$base/Comfort.dll" -OutFile (Join-Path $managed 'Comfort.dll')
+          Invoke-WebRequest "$base/Sirenix.Serialization.dll" -OutFile (Join-Path $managed 'Sirenix.Serialization.dll')
+          Invoke-WebRequest "$base/UnityEngine.UI.dll" -OutFile (Join-Path $managed 'UnityEngine.UI.dll')
+          Invoke-WebRequest "$base/UnityEngine.dll" -OutFile (Join-Path $managed 'UnityEngine.dll')
+          if ((Get-Item (Join-Path $managed 'Assembly-CSharp.dll')).Length -ne 8696320) { throw 'Unexpected Assembly-CSharp reference size' }
           if ((Get-Item (Join-Path $managed 'Comfort.dll')).Length -ne 30264) { throw 'Unexpected Comfort reference size' }
           if ((Get-Item (Join-Path $managed 'Sirenix.Serialization.dll')).Length -ne 114688) { throw 'Unexpected Sirenix.Serialization reference size' }
+          if ((Get-Item (Join-Path $managed 'UnityEngine.UI.dll')).Length -ne 264704) { throw 'Unexpected UnityEngine.UI reference size' }
+          if ((Get-Item (Join-Path $managed 'UnityEngine.dll')).Length -ne 125120) { throw 'Unexpected UnityEngine reference size' }
 
       - name: Build plugin
         shell: pwsh

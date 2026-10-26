@@ -5,78 +5,165 @@ using UnityEngine;
 namespace RaidReplay
 {
     /// <summary>
-    /// Stand-in body for a recorded entity: capsule + head + weapon bar. Pure Unity, no EFT internals, so it cannot
-    /// break on a game update. A model-based puppet (real gear and animations) would replace this class only.
+    /// Stylised humanoid built from primitives and animated procedurally from the recorded data (walk / run cycle by speed,
+    /// crouch, prone, lean, weapon raise when aiming, muzzle flash, collapse on death). Pure Unity: cannot break on a game update.
+    /// A model-based puppet (real gear and animations) would replace this class only.
     /// </summary>
     internal sealed class Puppet
     {
         public readonly EntityInfo Info;
         readonly GameObject _root;
-        readonly Transform _body, _head, _gun;
-        readonly Renderer[] _all;
-        readonly Renderer _headR;
-        readonly Color _color;
-        public Vector3 HeadPos => _head.position;
+        readonly Transform _hips, _torso, _headPivot, _armL, _armR, _legL, _legR, _kneeL, _kneeR, _gun, _flash;
+        readonly List<Renderer> _body = new List<Renderer>(), _arms = new List<Renderer>(), _head = new List<Renderer>(), _torsoR = new List<Renderer>(), _legs = new List<Renderer>();
+        readonly List<Renderer> _all = new List<Renderer>();
+        readonly Color _color, _limb, _skin;
+        float _phase, _flashUntil, _crouchBlend, _lieBlend;
+        bool _visible = true;
+        public Vector3 HeadPos => _headPivot.position;
         public Quaternion LookRot { get; private set; } = Quaternion.identity;
         public bool Alive { get; private set; } = true;
 
         public Puppet(EntityInfo info, bool isPovEntity)
         {
             Info = info;
-            _color = isPovEntity ? new Color(0.92f, 0.92f, 0.92f)
-                   : info.Side == EntitySide.Usec ? new Color(0.25f, 0.5f, 0.95f)
-                   : info.Side == EntitySide.Bear ? new Color(0.9f, 0.25f, 0.2f)
-                   : new Color(0.95f, 0.65f, 0.2f);
+            _color = isPovEntity ? new Color(0.88f, 0.88f, 0.84f)
+                   : info.Side == EntitySide.Usec ? new Color(0.26f, 0.45f, 0.82f)
+                   : info.Side == EntitySide.Bear ? new Color(0.78f, 0.27f, 0.22f)
+                   : new Color(0.82f, 0.6f, 0.24f);
+            _limb = Dark(_color, 0.72f);
+            _skin = new Color(0.86f, 0.72f, 0.62f);
+
             _root = new GameObject("RR_" + info.Nickname);
-            _body = Prim(PrimitiveType.Capsule, "body");
-            _head = Prim(PrimitiveType.Sphere, "head"); _head.localScale = Vector3.one * 0.24f;
-            _gun = Prim(PrimitiveType.Cube, "gun"); _gun.localScale = new Vector3(0.05f, 0.07f, 0.75f);
-            _gun.GetComponent<Renderer>().material.color = new Color(0.12f, 0.12f, 0.12f);
-            _all = _root.GetComponentsInChildren<Renderer>();
-            _headR = _head.GetComponent<Renderer>();
-            Tint(_color);
+            _hips = Pivot("hips", _root.transform, new Vector3(0f, 0.95f, 0f));
+            _torso = Pivot("torso", _hips, Vector3.zero);
+            Part(PrimitiveType.Cube, _torso, new Vector3(0f, 0.30f, 0f), new Vector3(0.42f, 0.56f, 0.24f), _color, _torsoR);
+            _headPivot = Pivot("head", _root.transform, new Vector3(0f, 1.62f, 0f));
+            Part(PrimitiveType.Sphere, _headPivot, new Vector3(0f, 0.02f, 0f), Vector3.one * 0.24f, _skin, _head);
+            Part(PrimitiveType.Cube, _headPivot, new Vector3(0f, 0.07f, 0.0f), new Vector3(0.26f, 0.09f, 0.26f), Dark(_color, 0.5f), _torsoR); // helmet band (hidden together with the torso)
+
+            _armL = Pivot("armL", _root.transform, Vector3.zero); Part(PrimitiveType.Cube, _armL, new Vector3(0f, -0.27f, 0f), new Vector3(0.10f, 0.56f, 0.10f), _limb, _arms);
+            _armR = Pivot("armR", _root.transform, Vector3.zero); Part(PrimitiveType.Cube, _armR, new Vector3(0f, -0.27f, 0f), new Vector3(0.10f, 0.56f, 0.10f), _limb, _arms);
+
+            _legL = Pivot("legL", _hips, new Vector3(-0.10f, 0f, 0f)); Part(PrimitiveType.Cube, _legL, new Vector3(0f, -0.225f, 0f), new Vector3(0.15f, 0.46f, 0.15f), _limb, _legs);
+            _kneeL = Pivot("kneeL", _legL, new Vector3(0f, -0.45f, 0f)); Part(PrimitiveType.Cube, _kneeL, new Vector3(0f, -0.23f, 0.02f), new Vector3(0.13f, 0.46f, 0.15f), Dark(_limb, 0.8f), _legs);
+            _legR = Pivot("legR", _hips, new Vector3(0.10f, 0f, 0f)); Part(PrimitiveType.Cube, _legR, new Vector3(0f, -0.225f, 0f), new Vector3(0.15f, 0.46f, 0.15f), _limb, _legs);
+            _kneeR = Pivot("kneeR", _legR, new Vector3(0f, -0.45f, 0f)); Part(PrimitiveType.Cube, _kneeR, new Vector3(0f, -0.23f, 0.02f), new Vector3(0.13f, 0.46f, 0.15f), Dark(_limb, 0.8f), _legs);
+
+            _gun = Pivot("gun", _root.transform, Vector3.zero);
+            Part(PrimitiveType.Cube, _gun, new Vector3(0f, 0f, 0.25f), new Vector3(0.05f, 0.08f, 0.72f), new Color(0.1f, 0.1f, 0.1f), _body);
+            Part(PrimitiveType.Cube, _gun, new Vector3(0f, -0.08f, 0.05f), new Vector3(0.04f, 0.14f, 0.07f), new Color(0.14f, 0.14f, 0.14f), _body);
+            _flash = Part(PrimitiveType.Sphere, _gun, new Vector3(0f, 0f, 0.68f), Vector3.one * 0.16f, new Color(1f, 0.85f, 0.35f), _body).transform;
+            _flash.gameObject.SetActive(false);
+
+            _all.AddRange(_body); _all.AddRange(_arms); _all.AddRange(_head); _all.AddRange(_torsoR); _all.AddRange(_legs);
         }
 
-        Transform Prim(PrimitiveType t, string name)
+        Transform Pivot(string name, Transform parent, Vector3 localPos)
         {
-            var go = GameObject.CreatePrimitive(t);
-            go.name = name;
+            var t = new GameObject(name).transform; t.SetParent(parent, false); t.localPosition = localPos; return t;
+        }
+
+        GameObject Part(PrimitiveType type, Transform parent, Vector3 pos, Vector3 scale, Color c, List<Renderer> bucket)
+        {
+            var go = GameObject.CreatePrimitive(type);
             var col = go.GetComponent<Collider>(); if (col != null) Object.Destroy(col);   // purely visual: must not touch game physics
-            go.transform.SetParent(_root.transform, false);
-            return go.transform;
+            go.transform.SetParent(parent, false); go.transform.localPosition = pos; go.transform.localScale = scale;
+            var r = go.GetComponent<Renderer>(); r.material.color = c; r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            bucket.Add(r);
+            return go;
         }
 
-        void Tint(Color c) { foreach (var r in _all) if (r.transform != _gun) r.material.color = c; }
+        static Color Dark(Color c, float k) => new Color(c.r * k, c.g * k, c.b * k, 1f);
+        static void Tint(List<Renderer> rs, Color c) { foreach (var r in rs) r.material.color = c; }
 
-        public void Apply(Sample s, bool hideHead)
+        public void Flash() { _flashUntil = Time.time + 0.06f; }
+
+        /// <param name="subject">true when the camera sits in this puppet's head: hide head/torso/arms, keep legs and weapon like a first-person view.</param>
+        public void Apply(Sample s, bool subject)
         {
-            Alive = s.Alive;
-            var feet = new Vector3(s.Px, s.Py, s.Pz);
-            var eye = new Vector3(s.Ex, s.Ey, s.Ez);
-            var body = Quaternion.Euler(0f, s.BodyYaw, 0f);
-            LookRot = Quaternion.Euler(s.LookPitch, s.LookYaw, s.LookRoll);
+            float dt = Mathf.Min(Time.deltaTime, 0.1f);
+            bool alive = s.Alive, wasAlive = Alive; Alive = alive;
+            bool prone = SampleFlags.Has(s.Flags, SampleFlags.Prone), crouch = SampleFlags.Has(s.Flags, SampleFlags.Crouch);
+            bool sprint = SampleFlags.Has(s.Flags, SampleFlags.Sprint), aim = SampleFlags.Has(s.Flags, SampleFlags.Aiming);
+            bool lying = prone || !alive;
+            float v = s.SpeedMs;
 
-            bool lying = !s.Alive || SampleFlags.Has(s.Flags, SampleFlags.Prone);
-            if (lying)
+            var feet = new Vector3(s.Px, s.Py, s.Pz);
+            var bodyRot = Quaternion.Euler(0f, s.BodyYaw, 0f);
+            LookRot = Quaternion.Euler(s.LookPitch, s.LookYaw, s.LookRoll);
+            _crouchBlend = Mathf.MoveTowards(_crouchBlend, crouch && !lying ? 1f : 0f, dt * 5f);
+            _lieBlend = Mathf.MoveTowards(_lieBlend, lying ? 1f : 0f, dt * (alive ? 3f : 4.5f));   // fall-down animation on death, crawl-down when going prone
+
+            // walk / run cycle
+            _phase += v * dt * (sprint ? 2.6f : 3.8f);
+            float amp = Mathf.Clamp01(v / (sprint ? 4.5f : 2.2f)) * (sprint ? 58f : 34f) * (1f - _crouchBlend * 0.45f);
+            float sw = Mathf.Sin(_phase) * amp;
+
+            // root: upright, or tipped over onto belly / back
+            float tip = _lieBlend * (alive ? 90f : (Info.Index % 2 == 0 ? 90f : -90f));
+            _root.transform.SetPositionAndRotation(feet + Vector3.up * Mathf.Lerp(0f, 0.13f, _lieBlend), bodyRot * Quaternion.Euler(tip, 0f, 0f));
+
+            float hipY = Mathf.Lerp(0.95f, 0.64f, _crouchBlend);
+            _hips.localPosition = new Vector3(0f, hipY, 0f);
+            bool leanL = SampleFlags.Has(s.Flags, SampleFlags.LeanLeft), leanR = SampleFlags.Has(s.Flags, SampleFlags.LeanRight);
+            float fwd = sprint ? 16f : _crouchBlend * 24f + 3f;
+            _torso.localRotation = Quaternion.Euler(fwd, 0f, leanL ? 15f : leanR ? -15f : 0f);
+
+            float thighBase = -_crouchBlend * 62f, kneeBase = _crouchBlend * 105f;
+            _legL.localRotation = Quaternion.Euler(thighBase + sw, 0f, 0f);
+            _legR.localRotation = Quaternion.Euler(thighBase - sw, 0f, 0f);
+            _kneeL.localRotation = Quaternion.Euler(kneeBase + Mathf.Max(0f, -sw) * 1.3f, 0f, 0f);
+            _kneeR.localRotation = Quaternion.Euler(kneeBase + Mathf.Max(0f, sw) * 1.3f, 0f, 0f);
+            if (!alive) { _legL.localRotation = Quaternion.Euler(8f, 0f, -6f); _legR.localRotation = Quaternion.Euler(-4f, 0f, 7f); _kneeL.localRotation = Quaternion.Euler(10f, 0f, 0f); _kneeR.localRotation = Quaternion.Euler(22f, 0f, 0f); }
+
+            // head follows the recorded view; neck sits on the torso
+            Vector3 neck = _torso.TransformPoint(new Vector3(0f, 0.64f, 0f));
+            _headPivot.SetPositionAndRotation(neck + _torso.up * 0.02f, alive ? LookRot : _torso.rotation);
+
+            // arms + weapon: aim = shouldered along the view, otherwise low-ready, sprint = weapon dropped + arm swing
+            Vector3 shoulderL = _torso.TransformPoint(new Vector3(-0.27f, 0.54f, 0f)), shoulderR = _torso.TransformPoint(new Vector3(0.27f, 0.54f, 0f));
+            _armL.position = shoulderL; _armR.position = shoulderR;
+            Quaternion gunRot; Vector3 gunPos;
+            if (!alive)
             {
-                _body.SetPositionAndRotation(feet + Vector3.up * 0.22f + body * Vector3.forward * 0.6f, body * Quaternion.Euler(90f, 0f, 0f));
-                _body.localScale = new Vector3(0.4f, 0.85f, 0.4f);
+                _armL.rotation = _torso.rotation * Quaternion.Euler(10f, 0f, 22f); _armR.rotation = _torso.rotation * Quaternion.Euler(-12f, 0f, -26f);
+                gunRot = _root.transform.rotation * Quaternion.Euler(0f, 40f, 90f); gunPos = _root.transform.position + _root.transform.right * 0.5f + Vector3.up * 0.1f;
             }
             else
             {
-                float h = Mathf.Max(0.5f, eye.y - feet.y + 0.12f);
-                _body.SetPositionAndRotation(feet + Vector3.up * (h * 0.5f), body);
-                _body.localScale = new Vector3(0.45f, h * 0.5f, 0.45f);
+                float drop = aim ? 0f : sprint ? 62f : 34f;
+                gunRot = LookRot * Quaternion.Euler(drop, 0f, 0f);
+                gunPos = (shoulderL + shoulderR) * 0.5f + gunRot * new Vector3(0.04f, -0.12f, 0.30f);
+                if (sprint && !aim)
+                {   // arms hold the gun while running; slight bob
+                    gunPos += Vector3.up * Mathf.Abs(Mathf.Sin(_phase)) * 0.03f;
+                }
+                _armR.rotation = Quaternion.LookRotation(gunPos + gunRot * new Vector3(0f, -0.03f, 0.10f) - shoulderR, _torso.up) * Quaternion.Euler(-90f, 0f, 0f);
+                _armL.rotation = Quaternion.LookRotation(gunPos + gunRot * new Vector3(0f, -0.02f, 0.46f) - shoulderL, _torso.up) * Quaternion.Euler(-90f, 0f, 0f);
             }
-            _head.position = eye;
-            _gun.SetPositionAndRotation(eye + LookRot * new Vector3(0.12f, -0.22f, 0.45f), LookRot);
-            Tint(s.Alive ? _color : new Color(0.35f, 0.35f, 0.35f));
-            _headR.enabled = !hideHead;
+            _gun.SetPositionAndRotation(gunPos, gunRot);
+
+            bool flash = Time.time < _flashUntil;
+            if (_flash.gameObject.activeSelf != flash) _flash.gameObject.SetActive(flash);
+
+            // colours
+            if (wasAlive != alive || !alive)
+            {
+                var c = alive ? _color : new Color(0.33f, 0.33f, 0.33f);
+                Tint(_torsoR, c); Tint(_arms, alive ? _limb : Dark(c, 0.85f)); Tint(_legs, alive ? _limb : Dark(c, 0.75f)); Tint(_head, alive ? _skin : new Color(0.5f, 0.45f, 0.42f));
+            }
+
+            // subject (camera inside this body): first-person style
+            SetGroup(_head, _visible && !subject); SetGroup(_torsoR, _visible && !subject); SetGroup(_arms, _visible && !subject);
+            SetGroup(_legs, _visible); SetGroup(_body, _visible);
+            if (!flash && _flash.gameObject.activeSelf) _flash.gameObject.SetActive(false);
         }
 
-        public bool HeadVisible => _headR.enabled;
-        public void ForceHeadVisible(bool v) { _headR.enabled = v; }
-        public void SetVisible(bool v) { foreach (var r in _all) r.enabled = v; }
+        static void SetGroup(List<Renderer> rs, bool on) { foreach (var r in rs) if (r != null && r.enabled != on) r.enabled = on; }
+
+        public bool HeadVisible => _head.Count > 0 && _head[0].enabled;
+        public void ForceHeadVisible(bool v) { SetGroup(_head, v); }
+        public void SetVisible(bool v) { _visible = v; if (!v) foreach (var r in _all) if (r != null) r.enabled = false; }
         public void Destroy() { if (_root != null) Object.Destroy(_root); }
     }
 
@@ -91,6 +178,7 @@ namespace RaidReplay
         public PuppetManager(Replay rep, int povIdx) { _rep = rep; _povIdx = povIdx; }
 
         public Puppet Get(int idx) => _puppets.TryGetValue(idx, out var p) ? p : null;
+        public void Flash(int idx) { if (_puppets.TryGetValue(idx, out var p)) p.Flash(); }
 
         public void Apply(Sample[] cur, bool[] present, int hideHeadOf)
         {

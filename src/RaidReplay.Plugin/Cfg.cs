@@ -8,7 +8,7 @@ namespace RaidReplay
     internal sealed class ConfigurationManagerAttributes
     {
         public int? Order;
-        public bool? HideDefaultButton, HideSettingName, IsAdvanced;
+        public bool? HideDefaultButton, HideSettingName, IsAdvanced, Browsable;
         public Action<ConfigEntryBase> CustomDrawer;
         public string DispName;
     }
@@ -27,7 +27,7 @@ namespace RaidReplay
         public static ConfigEntry<int> KeepLast, OthersHz, PovHz, MinRaidSeconds;
         public static ConfigEntry<string> ReplayFolder;
 
-        public static ConfigEntry<bool> AllowSpectate, AllowFreeCam, ShowNameplates, ShowTracers, ShowTimeline;
+        public static ConfigEntry<bool> AllowSpectate, AllowFreeCam, ShowNameplates, ShowTracers, ShowTimeline, QuietRaid, LeaveAsExtracted;
         public static ConfigEntry<float> NameplateRange;
 
         public static ConfigEntry<bool> MinimapEnabled, MinimapRotate;
@@ -41,11 +41,11 @@ namespace RaidReplay
         public static ConfigEntry<float> BadgeScale;
 
         public static ConfigEntry<KeyboardShortcut> KeyPause, KeySeekBack, KeySeekFwd, KeySlower, KeyFaster,
-            KeyFreeCam, KeyNextTarget, KeyBackToPov, KeyHud, KeyMinimap, KeyExit;
+            KeyFreeCam, KeyNextTarget, KeyBackToPov, KeyHud, KeyMinimap, KeyExit, KeyOpenCenter;
 
         public static void Bind(ConfigFile c)
         {
-            ListEntry = c.Bind(CList, "Replay list", "", new ConfigDescription("Your recorded raids. Press Play, then deploy on the same map.", null,
+            ListEntry = c.Bind(CList, "Replay Center", "", new ConfigDescription("Replay list, recording, playback, minimap and hotkeys all live in the Replay Center.", null,
                 new ConfigurationManagerAttributes { CustomDrawer = ReplayListDrawer.Draw, HideDefaultButton = true, HideSettingName = true, Order = 1000 }));
 
             RecordEnabled = c.Bind(CRec, "Record raids", true, Desc("Record every raid in the background.", 100));
@@ -59,6 +59,8 @@ namespace RaidReplay
                 new AcceptableValueRange<int>(0, 600), new ConfigurationManagerAttributes { Order = 60 }));
             ReplayFolder = c.Bind(CRec, "Replay folder (restart needed)", "", Desc("Empty = BepInEx/RaidReplay/replays", 50, advanced: true));
 
+            QuietRaid = c.Bind(CPlay, "Quiet raid for replays", true, Desc("When a replay is queued, the next raid starts without bots, bosses, PMC waves and hunger/thirst.", 120));
+            LeaveAsExtracted = c.Bind(CPlay, "Exit key also leaves the raid as extracted", false, Desc("Ends the raid as Survived so your gear is kept. It counts as a normal survived raid in your stats and quests.", 110));
             AllowSpectate = c.Bind(CPlay, "Allow watching other players", true, Desc("Switch the camera to any other recorded entity (first-person of that operator/bot).", 100));
             AllowFreeCam = c.Bind(CPlay, "Allow free camera", true, Desc("Detach the camera and fly around.", 90));
             ShowNameplates = c.Bind(CPlay, "Show nameplates", true, Desc("Nickname + distance above other entities.", 80));
@@ -91,6 +93,15 @@ namespace RaidReplay
             KeyMinimap = Key(c, "Toggle minimap", KeyCode.M, 30);
             KeyHud = Key(c, "Toggle all replay HUD", KeyCode.Home, 20);
             KeyExit = Key(c, "Exit replay", KeyCode.End, 10);
+            KeyOpenCenter = Key(c, "Open Replay Center", KeyCode.F10, 200);
+
+            // Everything is edited in the Replay Center; F12 only shows the "open" button.
+            foreach (var kv in c)
+            {
+                if (kv.Value == ListEntry) continue;
+                foreach (var tag in kv.Value.Description.Tags)
+                    if (tag is ConfigurationManagerAttributes a) a.Browsable = false;
+            }
         }
 
         static ConfigEntry<KeyboardShortcut> Key(ConfigFile c, string name, KeyCode k, int order) =>
